@@ -1,0 +1,370 @@
+// ==========================================
+// 1. 後端 Google Apps Script (GAS) 設定
+// ==========================================
+const GAS_WEB_APP_URL = "https://script.google.com/macros/s/AKfycbynMNsLpe2KXBCbi40a955DyAaeakxCriuA7zI4EemVTXi98NC3E_583Ex68_a23tQgGg/exec";
+// 串接後端儲存函式
+async function logStudentActivity(chapter, action, score = "", details = "") {
+const studentId = localStorage.getItem("chemistry_student_id") || "未登入學生";
+const payload = {
+studentId: studentId,
+chapter: 章節 ${chapter},
+action: action,
+score: score,
+details: details
+};
+console.log("正在傳送歷程至 GAS...", payload);
+try {
+// 使用 fetch 發送 POST 到 GAS 網頁應用程式
+// 採用 mode: 'no-cors' 以防瀏覽器跨網域安全機制阻擋
+await fetch(GAS_WEB_APP_URL, {
+method: "POST",
+mode: "no-cors",
+headers: {
+"Content-Type": "application/json"
+},
+body: JSON.stringify(payload)
+});
+console.log("歷程記錄成功發送！");
+} catch (error) {
+console.error("發送至後台時發生錯誤:", error);
+}
+}
+// ==========================================
+// 2. 學生狀態與初始化管理
+// ==========================================
+document.addEventListener("DOMContentLoaded", () => {
+const savedID = localStorage.getItem("chemistry_student_id");
+if (savedID) {
+document.getElementById("studentIdInput").value = savedID;
+}
+// 初始化載入第一章測驗與動畫
+renderQuiz(1);
+initCanvasAnimation();
+logStudentActivity(1, "進入系統並開啟首頁");
+});
+document.getElementById("saveStudentBtn").addEventListener("click", () => {
+const idInput = document.getElementById("studentIdInput").value.trim();
+if (idInput) {
+localStorage.setItem("chemistry_student_id", idInput);
+alert(學生身份確認成功：${idInput}，學習紀錄將同步記錄至後台。);
+logStudentActivity(currentChapter, "更新/確認學生姓名學號");
+} else {
+alert("請輸入有效的學號或姓名！");
+}
+});
+// ==========================================
+// 3. 狀態變數定義
+// ==========================================
+let currentChapter = 1;
+let currentTab = "learning";
+let quizAnswers = {}; // 紀錄學生當前章節的答題狀況
+// 章節清單標題對照表
+const chapterTitles = {
+1: "章節一：物質的分類與分離",
+2: "章節二：物質的結構",
+3: "章節三：化學反應",
+4: "章節四：常見的化學反應"
+};
+// 觀念引導文字對照表
+const learningContent = {
+1: <p class="text-lg text-slate-800 font-medium">歡迎來到物質的分離世界！</p><p>本章探討如何利用物質的<b>物理性質差異</b>（如沸點、溶解度、對附著劑的吸附力），將混合物分離成純物質。</p><div class="bg-amber-50 border-l-4 border-amber-500 p-4 rounded-r-lg my-4 text-sm text-amber-800"><span class="font-bold">🎯 均一平台核心觀念對應：</span> 濾紙層析實驗中，移動相（展開劑）會沿著固定相（濾紙）因毛細現象上升。混合物中的各成分因對固定相與移動相的<b>親和力不同</b>，移動速度產生差異，進而達到分離效果。</div>,
+2: <p class="text-lg text-slate-800 font-medium">探索微觀世界：物質的結構</p><p>本章探討原子的基本構造、電子在軌域中的排列規律（2, 8, 8 原則）以及元素週期表的週期性趨勢。</p><div class="bg-amber-50 border-l-4 border-amber-500 p-4 rounded-r-lg my-4 text-sm text-amber-800"><span class="font-bold">🎯 均一平台核心觀念對應：</span> 波耳的氫原子模型與能階觀念。電子吸收特定能量會躍遷到高能階（激發態），回歸基態時會釋放特定波長的彩光（光譜），這是鑑定元素的重要依據！</div>,
+3: <p class="text-lg text-slate-800 font-medium">巨觀計算：化學反應與計量</p><p>本章涵蓋化學反應式的平衡、莫耳數的運算、限量試劑的判斷，以及反應熱（ΔH）的巨觀能量變化。</p><div class="bg-amber-50 border-l-4 border-amber-500 p-4 rounded-r-lg my-4 text-sm text-amber-800"><span class="font-bold">🎯 均一平台核心觀念對應：</span> 反應熱必備觀念！不論反應是一步完成或是分多步完成，其總反應熱皆相同（赫斯定律）。在做化學計量時，必須先將所有已知質量換算為莫耳數（核心橋樑）。</div>,
+4: <p class="text-lg text-slate-800 font-medium">生活中的化學反應</p><p>本章深入分析溶液的溶解度平衡、水溶液中的酸鹼中和反應（pH值計算與滴定分析），以及電子轉移的氧化還原反應。</p><div class="bg-amber-50 border-l-4 border-amber-500 p-4 rounded-r-lg my-4 text-sm text-amber-800"><span class="font-bold">🎯 均一平台核心觀念對應：</span> 氧化還原的核心定義為電子轉移。失去電子者發生「氧化」反應（本身為還原劑）；得到電子者發生「還原」反應（本身為氧化劑）。酸鹼反應的本質則是氫離子與氫氧根離子結合成水。</div>
+};
+// ==========================================
+// 4. 高中化學素養題庫資料庫 (1~4章)
+// ==========================================
+const quizDatabase = {
+1: [
+{ id: 1, q: "下列哪一種分離物質的方法，主要是利用物質「沸點差異」而達到分離的目的？", options: ["(A) 濾紙層析法", "(B) 傾析法", "(C) 蒸餾法", "(D) 過濾法"], correct: 2, hint: "蒸餾法是將液體混合物加熱至沸騰，使低沸點成分先汽化，再冷凝收集的過程。" },
+{ id: 2, q: "在濾紙層析實驗中，若某藍色成分移動的距離大於黃色成分，下列敘述何者正確？", options: ["(A) 藍色成分與展開劑的親和力較小", "(B) 藍色成分與濾紙的親和力較小", "(C) 黃色成分的分子量必定比藍色大", "(D) 藍色成分的沸點比黃色高"], correct: 1, hint: "與濾紙親和力（吸附力）越小，或者與展開劑親和力越大者，隨展開劑上升的速度就越快、移動距離越長。" },
+{ id: 3, q: "小明將粗鹽溶於水後，經過過濾、蒸發結晶得到精鹽。關於這兩個步驟，分離出的主要物質依序為？", options: ["(A) 泥沙、水", "(B) 鹽巴、水", "(C) 泥沙、鹽巴", "(D) 水、泥沙"], correct: 2, hint: "過濾能阻擋不溶的泥沙雜質；蒸發結晶則是將水蒸發，留下沸點極高的食鹽晶體。" }
+],
+2: [
+{ id: 1, q: "中性原子的原子序為 11 的元素（鈉），其基態電子的核心最外層（價電子）電子數為多少？", options: ["(A) 1 個", "(B) 2 個", "(C) 8 個", "(D) 3 個"], correct: 0, hint: "原子序 11 的排列原則為 (2, 8, 1)，因此最外層（價電子）只有 1 個電子。" },
+{ id: 2, q: "關於波耳原子模型的敘述，下列何者正確？", options: ["(A) 電子可以在任意軌道上穩定運動", "(B) 電子由低能階躍遷至高能階時會發射光譜", "(C) 軌域能階具有不連續性（量子化）", "(D) 電子在定態軌域運動時會不斷向外輻射能量"], correct: 2, hint: "波耳模型指出能階是量子化（不連續）的。電子在定態軌域不輻射能量，只有在能階「躍遷」時才會吸收或釋放光能。" },
+{ id: 3, q: "下列哪一組元素屬於同一主族（同族元素），因而具有相似的化學性質？", options: ["(A) Na, Mg", "(B) F, Cl", "(C) C, N", "(D) He, H"], correct: 1, hint: "氟(F)與氯(Cl)同為第 17 族（ⅦA 族，鹵素元素），最外層皆有 7 個價電子，性質極為相似。" }
+],
+3: [
+{ id: 1, q: "已知丙烷燃燒的熱化學反應式為：C3H8(g) + 5O2(g) → 3CO2(g) + 4H2O(l)  ΔH = -2220 kJ。若完全燃燒 0.5 莫耳的丙烷，將放出多少熱量？", options: ["(A) 4440 kJ", "(B) 2220 kJ", "(C) 1110 kJ", "(D) 555 kJ"], correct: 2, hint: "ΔH 為負值代表放熱。反應式係數為 1 莫耳丙烷放熱 2220 kJ，故 0.5 莫耳會放出 2220 × 0.5 = 1110 kJ 的熱量。" },
+{ id: 2, q: "反應式平衡：a CH4 + b O2 → c CO2 + d H2O，其最簡整數係數總和 (a+b+c+d) 為何？", options: ["(A) 5", "(B) 6", "(C) 7", "(D) 8"], correct: 1, hint: "平衡後為 1 CH4 + 2 O2 → 1 CO2 + 2 H2O。係數總和為 1 + 2 + 1 + 2 = 6。" },
+{ id: 3, q: "在一個限量試劑反應中，決定產物最大生成量的依據是下列何者？", options: ["(A) 莫耳數最多的反應物", "(B) 反應速度最快的反應物", "(C) 反應中會完全消耗掉的限量反應物", "(D) 質量最大的反應物"], correct: 2, hint: "限量試劑是在反應中會最先被完全消耗掉的物質，它限制了反應能產生的最大產物量。" }
+],
+4: [
+{ id: 1, q: "將 0.1 M 的鹽酸 (HCl) 水溶液加水稀釋 100 倍後，其 pH 值最接近下列何者？", options: ["(A) 1", "(B) 3", "(C) 5", "(D) 7"], correct: 1, hint: "0.1 M 氫離子濃度為 10^-1 M (pH=1)。稀釋 100 倍後濃度變為 10^-3 M，故 pH 值變為 3。" },
+{ id: 2, q: "化學反應：Zn + Cu2+ → Zn2+ + Cu 中，下列敘述何者正確？", options: ["(A) Zn 得到電子被還原", "(B) Cu2+ 失去電子是氧化劑", "(C) Zn 失去電子發生氧化反應，為還原劑", "(D) 該反應不是氧化還原反應"], correct: 2, hint: "鋅(Zn)原子序活性大於銅，在此反應中失去電子變成 Zn2+，活性發生氧化，扮演「還原劑」的角色。" },
+{ id: 3, q: "在 25°C 下，某水溶液的氫氧根離子濃度 [OH-] 為 10^-4 M，則此溶液的酸鹼性為何？", options: ["(A) 酸性", "(B) 中性", "(C) 鹼性", "(D) 無法判斷"], correct: 2, hint: "25°C 下，[H+][OH-] = 10^-14。若 [OH-] = 10^-4 M，則 [H+] = 10^-10 M。此時 [OH-] > [H+]，溶液呈鹼性 (pH = 10)。" }
+]
+};
+// ==========================================
+// 5. 導覽、頁籤與 UI 渲染控制
+// ==========================================
+// 章節切換
+document.getElementById("chapterList").addEventListener("click", (e) => {
+const btn = e.target.closest("button");
+if (!btn) return;
+// 切換 Active 樣式
+document.querySelectorAll("#chapterList button").forEach(b => {
+b.classList.remove("bg-emerald-600", "text-white", "font-medium", "shadow-md", "active-chapter");
+b.classList.add("text-slate-300", "hover:bg-slate-800");
+// 還原副標題顏色
+const sub = b.querySelector("div div");
+if (sub) sub.classList.replace("text-emerald-200", "text-slate-500");
+});
+btn.classList.add("bg-emerald-600", "text-white", "font-medium", "shadow-md", "active-chapter");
+const activeSub = btn.querySelector("div div");
+if (activeSub) activeSub.classList.replace("text-slate-500", "text-emerald-200");
+currentChapter = parseInt(btn.dataset.chapter);
+updateContent();
+// 埋點紀錄
+logStudentActivity(currentChapter, "切換章節導覽");
+});
+// 頁籤切換
+document.querySelector(".bg-white.border-b").addEventListener("click", (e) => {
+const btn = e.target.closest("button");
+if (!btn) return;
+document.querySelectorAll(".bg-white.border-b button").forEach(b => {
+b.classList.remove("border-emerald-600", "text-emerald-600", "active-tab");
+b.classList.add("border-transparent", "text-slate-500");
+});
+btn.classList.add("border-emerald-600", "text-emerald-600", "active-tab");
+currentTab = btn.dataset.tab;
+// 更新 Badge
+document.getElementById("currentTabBadge").innerText = btn.innerText.replace(/[^\u4e00-\u9fa5)/g, '');
+// 顯示/隱藏 對應面板
+document.querySelectorAll(".tab-panel").forEach(p => p.classList.add("hidden"));
+document.getElementById(tabContent-${currentTab}).classList.remove("hidden");
+// 埋點紀錄
+logStudentActivity(currentChapter, 切換頁籤: ${currentTab});
+});
+// 更新右側面板主內容
+function updateContent() {
+document.getElementById("currentChapterTitle").innerText = chapterTitles[currentChapter];
+document.getElementById("learningText").innerHTML = learningContent[currentChapter];
+// 處理動畫分頁的專屬顯示
+if (currentChapter === 1) {
+document.getElementById("animationContainer-ch1").classList.remove("hidden");
+document.getElementById("animationPlaceholder").classList.add("hidden");
+} else {
+document.getElementById("animationContainer-ch1").classList.add("hidden");
+document.getElementById("animationPlaceholder").classList.remove("hidden");
+}
+renderQuiz(currentChapter);
+}
+// ==========================================
+// 6. 互動測驗渲染與答題系統邏輯
+// ==========================================
+function renderQuiz(chapterId) {
+const quizContainer = document.getElementById("quizContainer");
+quizContainer.innerHTML = "";
+quizAnswers = {};
+// 更新按鈕與進度
+const submitBtn = document.getElementById("submitQuizBtn");
+submitBtn.classList.add("opacity-50", "pointer-events-none");
+document.getElementById("quizProgress").innerText = 作答進度：0 / 3;
+const questions = quizDatabase[chapterId];
+questions.forEach((qData, qIndex) => {
+const qDiv = document.createElement("div");
+qDiv.className = "bg-slate-50 p-4 rounded-xl border border-slate-200 space-y-3";
+const qText = document.createElement("p");
+qText.className = "font-semibold text-slate-800 flex gap-2";
+qText.innerHTML = <span class="text-emerald-600">Q${qIndex+1}.</span> ${qData.q};
+qDiv.appendChild(qText);
+const optionsDiv = document.createElement("div");
+optionsDiv.className = "grid grid-cols-1 sm:grid-cols-2 gap-2";
+qData.options.forEach((opt, oIndex) => {
+const optBtn = document.createElement("button");
+optBtn.className = "text-left px-4 py-2.5 bg-white border border-slate-200 rounded-lg hover:bg-slate-100 hover:border-slate-300 transition-all text-sm cursor-pointer option-btn";
+optBtn.innerText = opt;
+optBtn.onclick = () => selectOption(chapterId, qIndex, oIndex, optBtn, qDiv, qData.hint, qData.correct);
+optionsDiv.appendChild(optBtn);
+});
+qDiv.appendChild(optionsDiv);
+// 詳解提示容器 (預設隱藏)
+const hintDiv = document.createElement("div");
+hintDiv.className = "hint-box hidden text-xs p-3 rounded-lg leading-relaxed mt-2";
+qDiv.appendChild(hintDiv);
+quizContainer.appendChild(qDiv);
+});
+}
+function selectOption(chapterId, qIndex, oIndex, btn, parentDiv, hintText, correctIndex) {
+// 如果該題已經點選過，禁止重複點選更改
+if (quizAnswers[qIndex] !== undefined) return;
+quizAnswers[qIndex] = {
+selected: oIndex,
+isCorrect: oIndex === correctIndex
+};
+// 處理該題所有按鈕的視覺反饋
+const allOptBtns = parentDiv.querySelectorAll(".option-btn");
+allOptBtns.forEach((b, idx) => {
+b.classList.remove("hover:bg-slate-100", "cursor-pointer");
+if (idx === correctIndex) {
+b.classList.add("bg-green-100", "border-green-400", "text-green-800", "font-medium");
+} else if (idx === oIndex && oIndex !== correctIndex) {
+b.classList.add("bg-red-100", "border-red-400", "text-red-800");
+} else {
+b.classList.add("opacity-60");
+}
+});
+// 顯示 AI 詳解提示
+const hintBox = parentDiv.querySelector(".hint-box");
+hintBox.classList.remove("hidden");
+if (oIndex === correctIndex) {
+hintBox.classList.add("bg-green-50", "text-green-700", "border-l-4", "border-green-500");
+hintBox.innerHTML = <strong>🎉 答對了！</strong><br>${hintText};
+} else {
+hintBox.classList.add("bg-red-50", "text-red-700", "border-l-4", "border-red-500");
+hintBox.innerHTML = <strong>❌ 答錯囉！AI 助教提示：</strong><br>${hintText};
+}
+// 更新作答進度
+const totalAnswered = Object.keys(quizAnswers).length;
+document.getElementById("quizProgress").innerText = 作答進度：${totalAnswered} / 3;
+// 當 3 題皆完成時，解鎖後台上傳按鈕
+if (totalAnswered === 3) {
+const submitBtn = document.getElementById("submitQuizBtn");
+submitBtn.classList.remove("opacity-50", "pointer-events-none");
+}
+}
+// 點擊送出測驗成果
+document.getElementById("submitQuizBtn").addEventListener("click", () => {
+let correctCount = 0;
+let wrongQuestions = [];
+for(let i=0; i<3; i++) {
+if (quizAnswers[i] && quizAnswers[i].isCorrect) {
+correctCount++;
+} else {
+wrongQuestions.push(Q${i+1});
+}
+}
+const scoreStr = ${correctCount} / 3;
+const detailsStr = wrongQuestions.length > 0 ? 答錯題號: ${wrongQuestions.join(", ")} : "全對！觀念極佳";
+// 發送至 GAS 後端
+logStudentActivity(currentChapter, "完成章節測驗並提交", scoreStr, detailsStr);
+alert(測驗結果已成功紀錄至後台試算表！\n您的得分：${scoreStr}\n${detailsStr});
+// 提交後鎖定按鈕防止重複發送
+document.getElementById("submitQuizBtn").add("opacity-50", "pointer-events-none");
+});
+// ==========================================
+// 7. HTML5 Canvas 濾紙層析實驗動畫控制邏輯
+// ==========================================
+let canvas, ctx;
+let animId = null;
+let solventY = 270; // 展開劑初始水平線高度位置
+const originY = 250;  // 墨水點初始起點高度位置
+let blueY = 250;
+let yellowY = 250;
+let isRunning = false;
+function initCanvasAnimation() {
+canvas = document.getElementById("chromatoCanvas");
+if (!canvas) return;
+ctx = canvas.getContext("2d");
+drawStaticCanvas();
+}
+// 繪製靜態實驗器材與基本畫面
+function drawStaticCanvas() {
+ctx.clearRect(0, 0, canvas.width, canvas.height);
+// 1. 繪製燒杯外觀
+ctx.strokeStyle = "#94a3b8";
+ctx.lineWidth = 4;
+ctx.lineCap = "round";
+ctx.beginPath();
+ctx.moveTo(180, 50);
+ctx.lineTo(180, 290);
+ctx.lineTo(320, 290);
+ctx.lineTo(320, 50);
+ctx.stroke();
+// 2. 繪製燒杯底部的展開劑液面
+ctx.fillStyle = "rgba(14, 165, 233, 0.15)";
+ctx.fillRect(182, 265, 136, 23);
+ctx.strokeStyle = "rgba(14, 165, 233, 0.4)";
+ctx.lineWidth = 2;
+ctx.beginPath();
+ctx.moveTo(182, 265);
+ctx.lineTo(318, 265);
+ctx.stroke();
+// 3. 繪製由固定牙籤吊掛的濾紙
+ctx.fillStyle = "#f8fafc";
+ctx.shadowColor = "rgba(0,0,0,0.05)";
+ctx.shadowBlur = 4;
+ctx.fillRect(220, 40, 60, 235);
+ctx.shadowBlur = 0; // 重置陰影
+ctx.strokeStyle = "#cbd5e1";
+ctx.lineWidth = 1;
+ctx.strokeRect(220, 40, 60, 235);
+// 4. 繪製基線 (Origin line)
+ctx.strokeStyle = "#cbd5e1";
+ctx.setLineDash();
+ctx.beginPath();
+ctx.moveTo(220, originY);
+ctx.lineTo(280, originY);
+ctx.stroke();
+ctx.setLineDash([]); // 還原實線
+// 5. 繪製毛細液面上升的前沿軌跡
+if (solventY < 270) {
+ctx.fillStyle = "rgba(14, 165, 233, 0.1)";
+ctx.fillRect(220, solventY, 60, 275 - solventY);
+ctx.strokeStyle = "rgba(14, 165, 233, 0.5)";
+ctx.lineWidth = 1.5;
+ctx.beginPath();
+ctx.moveTo(220, solventY);
+ctx.lineTo(280, solventY);
+ctx.stroke();
+}
+// 6. 繪製混合點或分離的點（藍色與黃色色素）
+if (!isRunning && blueY === originY && yellowY === originY) {
+// 初始狀態：尚未分離的綠色混合墨水點
+ctx.fillStyle = "#16a34a"; // 綠色
+ctx.beginPath();
+ctx.arc(250, originY, 5, 0, Math.PI * 2);
+ctx.fill();
+} else {
+// 展開中狀態：分開的藍色與黃色點 (模擬對固定相與移動相親和力之差異)
+ctx.fillStyle = "rgba(59, 130, 246, 0.8)"; // 藍色點 (親和力大，跑得快)
+ctx.beginPath();
+ctx.arc(250, blueY, 4.5, 0, Math.PI * 2);
+ctx.fill();
+ctx.fillStyle = "rgba(234, 179, 8, 0.9)"; // 黃色點 (親和力小，跑得慢)
+ctx.beginPath();
+ctx.arc(250, yellowY, 4.5, 0, Math.PI * 2);
+ctx.fill();
+}
+}
+// 動態遞迴渲染渲染動畫
+function updateAnimation() {
+const speedFactor = parseFloat(document.getElementById("polaritySlider").value) * 0.4;
+// 移動相上升
+if (solventY > 60) {
+solventY -= 1 * speedFactor;
+// 色素隨移動相以不同速率前進 (定義其移動 Rf 值常數)
+const blueRf = 0.8;   // 藍色跑得快
+const yellowRf = 0.45; // 黃色跑得慢
+blueY = originY - (originY - solventY) * blueRf;
+yellowY = originY - (originY - solventY) * yellowRf;
+} else {
+// 抵達濾紙頂端，動畫結束
+cancelAnimationFrame(animId);
+isRunning = false;
+alert("展開劑已抵達濾紙前沿上限！\n實驗分析：藍色成分上升高度較高，代表其與展開劑（移動相）的親和力較強。");
+return;
+}
+drawStaticCanvas();
+animId = requestAnimationFrame(updateAnimation);
+}
+// 動態按鈕綁定事件
+document.getElementById("startAnimBtn").addEventListener("click", () => {
+if (isRunning) return;
+isRunning = true;
+updateAnimation();
+// 埋點歷程上傳
+const polarity = document.getElementById("polaritySlider").value;
+logStudentActivity(1, "點擊操作實驗動畫模擬", "", 展開劑極性值設定: ${polarity});
+});
+document.getElementById("resetAnimBtn").addEventListener("click", () => {
+cancelAnimationFrame(animId);
+isRunning = false;
+solventY = 270;
+blueY = originY;
+yellowY = originY;
+drawStaticCanvas();
+});
